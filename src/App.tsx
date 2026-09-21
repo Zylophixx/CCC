@@ -71,12 +71,12 @@ function App() {
   const [showContact, setShowContact] = useState(false);
   const [heroHidden, setHeroHidden] = useState(false);
   const [heroHtml, setHeroHtml] = useState<{ desktop: string; mobile: string } | null>(null);
+  const [portfolioReady, setPortfolioReady] = useState(false);
   const heroRef = useRef<HTMLDivElement>(null);
 
   const portfolioSectionRef = useRef<HTMLDivElement>(null);
 
   // Detect mobile once at mount; update only on orientation change, not scroll.
-  // This avoids the constant re-render / layout thrash that a scroll listener causes.
   const [mobile, setMobile] = useState(() => typeof window !== 'undefined' && window.innerWidth < 768);
   useEffect(() => {
     const onResize = () => setMobile(window.innerWidth < 768);
@@ -88,9 +88,6 @@ function App() {
     };
   }, []);
 
-  // drives the desktop -> tablet hero morph (see src/hooks/useHeroMorph.ts)
-  // Skip on mobile — it's a desktop-only effect and its resize listener
-  // adds unnecessary work on phones.
   useHeroMorph(mobile);
 
   useEffect(() => {
@@ -101,7 +98,39 @@ function App() {
     return () => { cancelled = true; };
   }, []);
 
+  // Defer portfolio mounting until the user scrolls or is idle — keeps the
+  // first paint focused entirely on the hero (no 21 video tiles, no
+  // IntersectionObservers, no GSAP competing for CPU/network).
   useEffect(() => {
+    if (portfolioReady) return;
+    const trigger = () => setPortfolioReady(true);
+    window.addEventListener('scroll', trigger, { once: true, passive: true });
+    window.addEventListener('touchmove', trigger, { once: true, passive: true });
+    window.addEventListener('wheel', trigger, { once: true, passive: true });
+    const idle = (window as unknown as { requestIdleCallback?: (cb: () => void, opts?: { timeout: number }) => number }).requestIdleCallback;
+    let idleId: number | undefined;
+    if (idle) {
+      idleId = idle(trigger, { timeout: 3000 });
+    } else {
+      const t = setTimeout(trigger, 3000);
+      return () => {
+        clearTimeout(t);
+        window.removeEventListener('scroll', trigger);
+        window.removeEventListener('touchmove', trigger);
+        window.removeEventListener('wheel', trigger);
+      };
+    }
+    const cancelIdle = (window as unknown as { cancelIdleCallback?: (id: number) => void }).cancelIdleCallback;
+    return () => {
+      if (idleId && cancelIdle) cancelIdle(idleId);
+      window.removeEventListener('scroll', trigger);
+      window.removeEventListener('touchmove', trigger);
+      window.removeEventListener('wheel', trigger);
+    };
+  }, [portfolioReady]);
+
+  useEffect(() => {
+    if (!portfolioReady) return;
     let cancelled = false;
     let cleanup = () => {};
 
@@ -150,7 +179,7 @@ function App() {
       cancelAnimationFrame(frame);
       cleanup();
     };
-  }, []);
+  }, [portfolioReady]);
 
   const vh = (n: number) => mobile ? `${n}svh` : `${n}vh`;
 
@@ -323,6 +352,10 @@ function App() {
       >
         <div className="max-w-7xl mx-auto px-6 sm:px-8 py-20">
 
+          {!portfolioReady ? (
+            <div style={{ minHeight: '60vh' }} />
+          ) : (
+          <>
           {/* Header */}
           <div className="text-center mb-20">
         
@@ -460,6 +493,8 @@ function App() {
             <p className="text-center ibm-font text-xs mt-12 pb-4" >
               All content is original work. Brands and clients belong to their respective owners.
             </p>
+          </>
+          )}
         </div>
       </div>
 
